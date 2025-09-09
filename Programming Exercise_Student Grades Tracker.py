@@ -1,5 +1,5 @@
 # Name: Jose Alcala
-# Date: 10/10/2023
+# Date: 09/10/2023
 # Class: CIS 188
 
 # Description: A program to track student grades with functionalities to add, update, remove, display
@@ -66,3 +66,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
