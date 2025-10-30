@@ -1,0 +1,245 @@
+#!/usr/bin/env python3
+"""
+NeonLauncher – macOS Realtime Launcher
+Features:
+- Live clock and calendar (updates every second)
+- Hybrid flat/glossy neon-green style
+- Fullscreen toggle (icon + F11)
+- Google search bar
+- Editable web app grid
+- macOS app launcher buttons
+- Weather widget (OpenWeatherMap)
+- Bottom image display
+"""
+
+import tkinter as tk
+from tkinter import font as tkfont
+from datetime import datetime, date
+import calendar
+import webbrowser
+import subprocess
+from PIL import Image, ImageTk
+import requests
+import urllib.parse
+
+# ========== CONFIG ==========
+UPDATE_INTERVAL = 1000  # 1 second
+BOTTOM_IMAGE_PATH = "/Users/edu-loaner/Downloads/golden_skull_on_a_transparent_background__by_prussiaart_dcravn7-pre.png"
+SEARCH_URL = "https://www.google.com/search?q="
+WEATHER_API_KEY = "YOUR_OPENWEATHERMAP_API_KEY"  # <-- Replace with your key
+CITY = "Los Angeles"
+
+DEFAULT_WEB_APPS = [
+    ("Google Docs", "https://docs.google.com/"),
+    ("ChatGPT", "https://chat.openai.com/"),
+    ("YouTube", "https://www.youtube.com/"),
+    ("GitHub", "https://github.com/"),
+]
+
+MAC_APPS = [
+    ("Finder", "Finder"),
+    ("Notes", "Notes"),
+    ("Terminal", "Terminal"),
+    ("Safari", "Safari"),
+]
+
+
+# ========== CLASS ==========
+class NeonLauncher(tk.Tk):
+    def __init__(self):
+        super().__init__()
+        self.title("Neon Launcher")
+        self.geometry("1000x740")
+        self.resizable(True, True)
+        self.fullscreen = False
+
+        # Colors & Fonts
+        self.fg = "#00FF77"
+        self.bg = "#000000"
+        self.highlight = "#FA00C4"
+        self.accent = "#39FF14"
+        self.label_font_family = "Courier"
+        self.label_font_size = 18
+
+        # Data
+        self.today = date.today()
+        self.web_apps = DEFAULT_WEB_APPS.copy()
+        self._img_refs = []
+
+        # UI build
+        self._build_ui()
+        self.update_every_second()
+
+        # Key bindings
+        self.bind("<F11>", self.toggle_fullscreen)
+
+    # ---------- UI ----------
+    def _build_ui(self):
+        self.configure(bg=self.bg)
+
+        # ----- TOP BAR -----
+        top = tk.Frame(self, bg=self.bg)
+        top.pack(fill="x", pady=6)
+
+        # Clock and Date
+        self.clock_var = tk.StringVar()
+        self.date_var = tk.StringVar()
+        tk.Label(top, textvariable=self.clock_var, fg=self.fg, bg=self.bg,
+                 font=(self.label_font_family, 28, "bold")).pack(side="left", padx=12)
+        tk.Label(top, textvariable=self.date_var, fg=self.fg, bg=self.bg,
+                 font=(self.label_font_family, 14)).pack(side="left", padx=6)
+
+        # Search Bar
+        search_frame = tk.Frame(top, bg=self.bg)
+        search_frame.pack(side="right", padx=12)
+        self.search_entry = tk.Entry(search_frame, fg=self.fg, bg="#111", insertbackground=self.fg,
+                                     font=(self.label_font_family, 14), width=18)
+        self.search_entry.pack(side="left", padx=4)
+        tk.Button(search_frame, text="Search", fg=self.fg, bg=self.bg,
+                  font=(self.label_font_family, 12), command=self.do_search,
+                  relief="flat").pack(side="left")
+
+        # Fullscreen Toggle Button
+        fullscreen_btn = tk.Button(top, text="⛶", fg=self.fg, bg=self.bg,
+                                   font=(self.label_font_family, 18, "bold"),
+                                   command=self.toggle_fullscreen, relief="flat", bd=0)
+        fullscreen_btn.pack(side="right", padx=8)
+        fullscreen_btn.bind("<Enter>", lambda e: fullscreen_btn.config(bg="#111"))
+        fullscreen_btn.bind("<Leave>", lambda e: fullscreen_btn.config(bg=self.bg))
+
+        # ----- MAIN BODY -----
+        main = tk.Frame(self, bg=self.bg)
+        main.pack(fill="both", expand=True, padx=12, pady=6)
+
+        # Calendar
+        self.cal_frame = tk.Frame(main, bg=self.bg)
+        self.cal_frame.pack(side="left", expand=True, fill="both", padx=8)
+        self.cal_labels = []
+        self.build_calendar()
+        self.draw_calendar()
+
+        # Right section
+        right = tk.Frame(main, bg=self.bg)
+        right.pack(side="right", fill="both", expand=True, padx=8)
+
+        # Web Apps
+        tk.Label(right, text="Web Apps", fg=self.fg, bg=self.bg,
+                 font=(self.label_font_family, 18, "bold")).pack(anchor="w", pady=(2, 4))
+        self.web_grid = tk.Frame(right, bg=self.bg)
+        self.web_grid.pack(fill="both", pady=(0, 6))
+        self.build_grid(self.web_grid, self.web_apps, columns=2)
+
+        # macOS Apps
+        tk.Label(right, text="macOS Apps", fg=self.fg, bg=self.bg,
+                 font=(self.label_font_family, 18, "bold")).pack(anchor="w", pady=(6, 4))
+        self.mac_grid = tk.Frame(right, bg=self.bg)
+        self.mac_grid.pack(fill="both")
+        self.build_grid(self.mac_grid, MAC_APPS, columns=2, mac=True)
+
+        # Weather Widget
+        self.weather_var = tk.StringVar(value="Fetching weather...")
+        tk.Label(right, textvariable=self.weather_var, fg=self.accent, bg=self.bg,
+                 font=(self.label_font_family, 14)).pack(anchor="w", pady=(12, 6))
+        self.update_weather()
+
+        # ----- BOTTOM IMAGE -----
+        bottom_frame = tk.Frame(self, bg=self.bg)
+        bottom_frame.pack(side="bottom", pady=8)
+        try:
+            img = Image.open(BOTTOM_IMAGE_PATH)
+            img.thumbnail((850, 750))
+            self.bottom_img = ImageTk.PhotoImage(img)
+            self._img_refs.append(self.bottom_img)
+            tk.Label(bottom_frame, image=self.bottom_img, bg=self.bg).pack()
+        except Exception:
+            pass
+
+    # ---------- Calendar ----------
+    def build_calendar(self):
+        days = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+        for i, d in enumerate(days):
+            tk.Label(self.cal_frame, text=d, fg=self.fg, bg=self.bg,
+                     font=(self.label_font_family, 16, "bold")).grid(row=0, column=i)
+        for r in range(1, 7):
+            row = []
+            for c in range(7):
+                lbl = tk.Label(self.cal_frame, text="", width=4, height=2,
+                               fg=self.fg, bg=self.bg,
+                               font=(self.label_font_family, 12))
+                lbl.grid(row=r, column=c, padx=2, pady=2)
+                row.append(lbl)
+            self.cal_labels.append(row)
+
+    def draw_calendar(self):
+        now = datetime.now()
+        month_days = calendar.Calendar().monthdayscalendar(now.year, now.month)
+        for r, week in enumerate(month_days):
+            for c, day in enumerate(week):
+                lbl = self.cal_labels[r][c]
+                lbl.config(text=str(day) if day != 0 else "")
+                if day == self.today.day:
+                    lbl.config(bg=self.highlight)
+                else:
+                    lbl.config(bg=self.bg)
+
+    # ---------- Grid Builders ----------
+    def build_grid(self, frame, items, columns=2, mac=False):
+        for w in frame.winfo_children():
+            w.destroy()
+        for idx, (label, action) in enumerate(items):
+            r, c = divmod(idx, columns)
+            btn = tk.Button(frame, text=label, fg=self.fg, bg=self.bg,
+                            font=(self.label_font_family, self.label_font_size),
+                            relief="flat",
+                            command=lambda a=action, is_mac=mac: self.launch_item(a, is_mac))
+            btn.grid(row=r, column=c, padx=6, pady=6, sticky="nsew")
+            btn.bind("<Enter>", lambda e, b=btn: b.config(bg="#111"))
+            btn.bind("<Leave>", lambda e, b=btn: b.config(bg=self.bg))
+        for col in range(columns):
+            frame.grid_columnconfigure(col, weight=1)
+
+    def launch_item(self, action, mac=False):
+        if mac:
+            subprocess.run(["open", "-a", action])
+        else:
+            webbrowser.open(action)
+
+    # ---------- Weather ----------
+    def update_weather(self):
+        try:
+            url = f"http://api.openweathermap.org/data/2.5/weather?q={urllib.parse.quote(CITY)}&appid={WEATHER_API_KEY}&units=imperial"
+            r = requests.get(url, timeout=5)
+            data = r.json()
+            if "main" in data:
+                temp = data["main"]["temp"]
+                desc = data["weather"][0]["description"].capitalize()
+                self.weather_var.set(f"{CITY}: {temp:.0f}°F, {desc}")
+            else:
+                self.weather_var.set("Weather unavailable.")
+        except Exception:
+            self.weather_var.set("Weather update failed.")
+        self.after(600000, self.update_weather)  # update every 10 min
+
+    # ---------- Search ----------
+    def do_search(self):
+        query = self.search_entry.get().strip()
+        if query:
+            webbrowser.open(SEARCH_URL + urllib.parse.quote(query))
+
+    # ---------- Clock / Fullscreen ----------
+    def update_every_second(self):
+        now = datetime.now()
+        self.clock_var.set(now.strftime("%I:%M:%S %p").lstrip("0"))
+        self.date_var.set(now.strftime("%A, %B %d, %Y"))
+        self.draw_calendar()
+        self.after(UPDATE_INTERVAL, self.update_every_second)
+
+    def toggle_fullscreen(self, event=None):
+        self.fullscreen = not self.fullscreen
+        self.attributes("-fullscreen", self.fullscreen)
+
+
+# ========== MAIN ==========
+if __name__ == "__main__":
+    app = NeonLauncher()
+    app.mainloop()
