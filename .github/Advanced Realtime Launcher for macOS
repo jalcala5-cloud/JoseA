@@ -1,0 +1,236 @@
+#!/usr/bin/env python3
+"""
+Advanced Realtime Launcher for macOS
+- Clock & calendar refreshing every second
+- Scrolling reminder text
+- Add web apps dynamically
+- Open local apps
+- Change background, fonts, label textures/colors/sizes
+- Small screen & full screen layout
+- Open Spotify playlist and weather
+"""
+
+import tkinter as tk
+from tkinter import colorchooser, font as tkfont, filedialog, simpledialog
+from datetime import datetime
+import calendar
+import webbrowser
+import subprocess
+from PIL import Image, ImageTk
+
+UPDATE_INTERVAL = 1000  # 1 second
+scroll_speed = 200  # milliseconds
+
+# Default settings
+bg_color = "#1e1e1e"
+fg_color = "#00ff00"
+font_name = "Helvetica"
+font_size = 24
+reminder_text = "Don't forget to drink water! "
+
+WEB_APPS = {
+    "Google Docs": "https://docs.google.com/",
+    "ChatGPT": "https://chat.openai.com/",
+    "YouTube": "https://www.youtube.com/",
+    "Spotify": "https://open.spotify.com/",
+    "D2L": "https://d2l.com/"
+}
+
+SPOTIFY_TRACK = "https://open.spotify.com/track/4PTG3Z6ehGkBFwjybzWkR8"
+WEATHER_LINK = "https://www.accuweather.com/en/us/tucson/85716/weather-forecast/346936"
+
+class RealtimeLauncher:
+    def __init__(self, root):
+        self.root = root
+        root.title("Advanced Realtime Launcher")
+        root.configure(bg=bg_color)
+        root.state("zoomed")  # Fullscreen
+        self.width = root.winfo_screenwidth()
+        self.height = root.winfo_screenheight()
+
+        self.reminder_index = 0
+        self.app_buttons = {}
+        self.bg_image = None
+
+        # Top Clock & Date
+        self.clock_label = tk.Label(root, font=(font_name, font_size), fg=fg_color, bg=bg_color)
+        self.clock_label.pack(pady=10)
+        self.date_label = tk.Label(root, font=(font_name, font_size-4), fg=fg_color, bg=bg_color)
+        self.date_label.pack(pady=5)
+
+        # Right-side Calendar
+        self.cal_frame = tk.Frame(root, bg=bg_color)
+        self.cal_frame.pack(side="right", padx=20, pady=20)
+        self.cal_labels = []
+
+        # Reminder scrolling text
+        self.reminder_label = tk.Label(root, font=(font_name, font_size-4), fg=fg_color, bg=bg_color)
+        self.reminder_label.pack(side="bottom", pady=10)
+
+        # Web/Local apps frame
+        self.web_frame = tk.Frame(root, bg=bg_color)
+        self.web_frame.pack(side="left", padx=20, pady=20)
+        self.load_apps_buttons()
+
+        # Extra buttons: Spotify & Weather
+        tk.Button(self.web_frame, text="Open Spotify Track", command=lambda: webbrowser.open(SPOTIFY_TRACK),
+                  font=(font_name, font_size-2), bg="#333", fg="#fff", width=20).pack(pady=5)
+        tk.Button(self.web_frame, text="Weather", command=lambda: webbrowser.open(WEATHER_LINK),
+                  font=(font_name, font_size-2), bg="#333", fg="#fff", width=20).pack(pady=5)
+
+        # Settings button
+        self.settings_btn = tk.Button(root, text="Settings", command=self.open_settings,
+                                      font=(font_name, font_size-2), bg="#ff69b4", fg="#000")
+        self.settings_btn.pack(side="top", pady=10)
+
+        # Start updates
+        self.update_clock()
+        self.update_calendar()
+        self.scroll_text()
+
+    def load_apps_buttons(self):
+        for widget in self.web_frame.winfo_children():
+            if widget not in [self.settings_btn]:
+                widget.destroy()
+        self.app_buttons.clear()
+        for app_name, path in WEB_APPS.items():
+            btn = tk.Button(self.web_frame, text=app_name, command=lambda u=path: self.open_app(u),
+                            font=(font_name, font_size-2), bg="#333", fg="#fff", width=20)
+            btn.pack(pady=5)
+            self.app_buttons[app_name] = btn
+
+    def open_app(self, path):
+        if path.startswith("http"):
+            webbrowser.open(path)
+        else:
+            subprocess.Popen(["open", path])
+
+    def update_clock(self):
+        now = datetime.now()
+        time_str = now.strftime("%I:%M:%S %p")
+        date_str = now.strftime("%A, %B %d, %Y")
+        self.clock_label.config(text=time_str)
+        self.date_label.config(text=date_str)
+        self.root.after(UPDATE_INTERVAL, self.update_clock)
+
+    def update_calendar(self):
+        for lbl in self.cal_labels:
+            lbl.destroy()
+        self.cal_labels.clear()
+        now = datetime.now()
+        cal_text = calendar.month(now.year, now.month)
+        for line in cal_text.splitlines():
+            lbl = tk.Label(self.cal_frame, text=line, font=(font_name, 14), fg=fg_color, bg=bg_color, justify="right")
+            lbl.pack(anchor="e")
+            self.cal_labels.append(lbl)
+
+        # Highlight today's day
+        today = str(now.day)
+        for lbl in self.cal_labels:
+            if today in lbl.cget("text").split():
+                lbl.config(bg="pink")
+        self.root.after(UPDATE_INTERVAL, self.update_calendar)
+
+    def scroll_text(self):
+        display_text = reminder_text[self.reminder_index:] + reminder_text[:self.reminder_index]
+        self.reminder_label.config(text=display_text)
+        self.reminder_index = (self.reminder_index + 1) % len(reminder_text)
+        self.root.after(scroll_speed, self.scroll_text)
+
+    def open_settings(self):
+        settings_win = tk.Toplevel(self.root)
+        settings_win.title("Settings")
+        settings_win.configure(bg=bg_color)
+        settings_win.geometry("400x600")
+
+        # Change background color
+        tk.Label(settings_win, text="Background Color:", bg=bg_color, fg=fg_color).pack(pady=5)
+        tk.Button(settings_win, text="Choose", command=self.change_bg_color).pack(pady=5)
+
+        # Change background image
+        tk.Button(settings_win, text="Choose Background Image", command=self.change_bg_image).pack(pady=5)
+
+        # Change font color
+        tk.Label(settings_win, text="Font Color:", bg=bg_color, fg=fg_color).pack(pady=5)
+        tk.Button(settings_win, text="Choose", command=self.change_font_color).pack(pady=5)
+
+        # Change font size
+        tk.Label(settings_win, text="Font Size:", bg=bg_color, fg=fg_color).pack(pady=5)
+        size_var = tk.IntVar(value=font_size)
+        tk.Spinbox(settings_win, from_=8, to=72, textvariable=size_var, command=lambda: self.change_font_size(size_var.get())).pack(pady=5)
+
+        # Change reminder text
+        tk.Label(settings_win, text="Scrolling Reminder Text:", bg=bg_color, fg=fg_color).pack(pady=5)
+        tk.Button(settings_win, text="Edit Reminder Text", command=self.change_reminder_text).pack(pady=5)
+
+        # Add new web/local app
+        tk.Label(settings_win, text="Add Web or Local App:", bg=bg_color, fg=fg_color).pack(pady=5)
+        tk.Button(settings_win, text="Add App", command=self.add_new_app).pack(pady=5)
+
+    def change_bg_color(self):
+        global bg_color
+        color = colorchooser.askcolor()[1]
+        if color:
+            bg_color = color
+            self.root.configure(bg=bg_color)
+            self.clock_label.config(bg=bg_color)
+            self.date_label.config(bg=bg_color)
+            self.reminder_label.config(bg=bg_color)
+            self.cal_frame.config(bg=bg_color)
+            self.web_frame.config(bg=bg_color)
+
+    def change_bg_image(self):
+        path = filedialog.askopenfilename(filetypes=[("Image Files", "*.png *.jpg *.jpeg *.gif")])
+        if path:
+            img = Image.open(path)
+            img = img.resize((self.width, self.height), Image.ANTIALIAS)
+            self.bg_image = ImageTk.PhotoImage(img)
+            bg_label = tk.Label(self.root, image=self.bg_image)
+            bg_label.place(x=0, y=0, relwidth=1, relheight=1)
+            # Make labels transparent on top
+            self.clock_label.lift()
+            self.date_label.lift()
+            self.reminder_label.lift()
+            self.cal_frame.lift()
+            self.web_frame.lift()
+            self.settings_btn.lift()
+
+    def change_font_color(self):
+        global fg_color
+        color = colorchooser.askcolor()[1]
+        if color:
+            fg_color = color
+            self.clock_label.config(fg=fg_color)
+            self.date_label.config(fg=fg_color)
+            self.reminder_label.config(fg=fg_color)
+            for lbl in self.cal_labels:
+                lbl.config(fg=fg_color)
+
+    def change_font_size(self, size):
+        global font_size
+        font_size = size
+        self.clock_label.config(font=(font_name, font_size))
+        self.date_label.config(font=(font_name, font_size-4))
+        self.reminder_label.config(font=(font_name, font_size-4))
+        for lbl in self.cal_labels:
+            lbl.config(font=(font_name, 14))
+        for btn in self.app_buttons.values():
+            btn.config(font=(font_name, font_size-2))
+
+    def change_reminder_text(self):
+        global reminder_text
+        new_text = simpledialog.askstring("Reminder Text", "Enter new scrolling text:", parent=self.root)
+        if new_text:
+            reminder_text = new_text
+
+    def add_new_app(self):
+        name = simpledialog.askstring("App Name", "Enter App Name:", parent=self.root)
+        path = simpledialog.askstring("App URL/Path", "Enter Web URL or Local App Path:", parent=self.root)
+        if name and path:
+            WEB_APPS[name] = path
+            self.load_apps_buttons()
+
+if __name__ == "__main__":
+    root = tk.Tk()
+    app = RealtimeLauncher(root)
+    root.mainloop()
