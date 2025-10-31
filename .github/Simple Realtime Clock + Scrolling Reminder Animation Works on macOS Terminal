@@ -1,0 +1,47 @@
+#!/usr/bin/env python3
+"""
+Simple Realtime Clock + Scrolling Reminder Animation
+Works on macOS Terminal
+"""
+
+import time
+from datetime import datetime
+import os
+import sys
+
+def clear_screen():
+    os.system("clear")
+
+def scrolling_text(text, width=30):
+    """Creates a looping scrolling text effect."""
+    padded = " " * width + text + " " * width
+    for i in range(len(padded) - width + 1):
+        sys.stdout.write("\r" + padded[i:i+width])
+        sys.stdout.flush()
+        time.sleep(0.15)
+
+def main():
+    clear_screen()
+    print("🕒 Real-time Clock + Reminder Demo")
+    print("---------------------------------")
+    reminder = input("Enter a reminder text: ")
+    print("\nPress Ctrl + C to stop.\n")
+
+    while True:
+        now = datetime.now()
+        clock = now.strftime("%I:%M:%S %p")
+        date = now.strftime("%A, %B %d, %Y")
+
+        clear_screen()
+        print("🕒 Real-time Clock + Reminder Demo")
+        print("---------------------------------\n")
+        print(f"Current Time: {clock}")
+        print(f"Date: {date}\n")
+        print("💭 Reminder (scrolling text):")
+
+        scrolling_text(reminder)
+
+try:
+    main()
+except KeyboardInterrupt:
+    print("\n⏹ Program stopped by user.")
