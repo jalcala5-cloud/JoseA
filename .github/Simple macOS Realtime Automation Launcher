@@ -1,0 +1,128 @@
+#!/usr/bin/env python3
+"""
+Simple macOS Realtime Automation Launcher
+Includes:
+- Realtime Clock & Calendar (refresh every second)
+- Scrolling Reminder Text
+- Structured placeholders for Web Apps, Settings, and Features
+"""
+
+import tkinter as tk
+from datetime import datetime
+import calendar
+import webbrowser
+
+class LauncherApp:
+    def __init__(self, root):
+        self.root = root
+        self.root.title("Realtime Launcher")
+        self.root.geometry("900x600")
+        self.root.configure(bg="#1c1c1e")
+
+        # --- Top Section (Clock + Date) ---
+        self.clock_label = tk.Label(root, font=("Helvetica", 32, "bold"), fg="white", bg="#1c1c1e")
+        self.clock_label.place(x=30, y=10)
+
+        self.date_label = tk.Label(root, font=("Helvetica", 16), fg="lightgray", bg="#1c1c1e")
+        self.date_label.place(x=30, y=70)
+
+        # --- Right-Side Calendar ---
+        self.cal_frame = tk.Frame(root, bg="#1c1c1e")
+        self.cal_frame.place(x=650, y=120)
+        self.create_calendar()
+
+        # --- Scrolling Text (Reminder) ---
+        self.scroll_text = "💬 Stay positive and focused! Keep moving forward! "
+        self.scroll_index = 0
+        self.scroll_label = tk.Label(root, text="", font=("Helvetica", 16), fg="#ff66cc", bg="#1c1c1e")
+        self.scroll_label.place(x=30, y=550)
+
+        # --- Web App Search Bar ---
+        tk.Label(root, text="🌐 Web App:", font=("Helvetica", 14), fg="white", bg="#1c1c1e").place(x=30, y=130)
+        self.url_entry = tk.Entry(root, width=40, font=("Helvetica", 14))
+        self.url_entry.place(x=150, y=130)
+        tk.Button(root, text="Open", command=self.open_url, bg="#ff66cc", fg="white").place(x=550, y=130)
+
+        # --- Quick Apps ---
+        tk.Button(root, text="Terminal", command=self.open_terminal, bg="#3a3a3c", fg="white").place(x=30, y=200)
+        tk.Button(root, text="Documents", command=self.open_documents, bg="#3a3a3c", fg="white").place(x=130, y=200)
+
+        # --- Start Loop Updates ---
+        self.update_clock()
+        self.scroll_text_animation()
+
+    # ---------------------------
+    # Function: Update Realtime Clock
+    # ---------------------------
+    def update_clock(self):
+        now = datetime.now()
+        time_str = now.strftime("%I:%M:%S %p")
+        date_str = now.strftime("%A, %B %d, %Y")
+        self.clock_label.config(text=time_str)
+        self.date_label.config(text=date_str)
+        self.root.after(1000, self.update_clock)
+
+    # ---------------------------
+    # Function: Calendar Display
+    # ---------------------------
+    def create_calendar(self):
+        for widget in self.cal_frame.winfo_children():
+            widget.destroy()
+
+        now = datetime.now()
+        year, month, today = now.year, now.month, now.day
+        cal = calendar.monthcalendar(year, month)
+
+        tk.Label(self.cal_frame, text=calendar.month_name[month] + " " + str(year),
+                 font=("Helvetica", 14, "bold"), fg="white", bg="#1c1c1e").grid(row=0, column=0, columnspan=7, pady=5)
+
+        for i, day in enumerate(["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"]):
+            tk.Label(self.cal_frame, text=day, fg="pink", bg="#1c1c1e").grid(row=1, column=i, padx=4)
+
+        for r, week in enumerate(cal, start=2):
+            for c, day in enumerate(week):
+                if day == 0:
+                    tk.Label(self.cal_frame, text="", width=3, bg="#1c1c1e").grid(row=r, column=c)
+                elif day == today:
+                    tk.Label(self.cal_frame, text=str(day), width=3, bg="pink", fg="white", font=("Helvetica", 10, "bold")).grid(row=r, column=c)
+                else:
+                    tk.Label(self.cal_frame, text=str(day), width=3, fg="white", bg="#1c1c1e").grid(row=r, column=c)
+
+    # ---------------------------
+    # Function: Scrolling Text
+    # ---------------------------
+    def scroll_text_animation(self):
+        display_len = 40
+        text = self.scroll_text + " "
+        show = text[self.scroll_index:self.scroll_index + display_len]
+        self.scroll_label.config(text=show)
+        self.scroll_index = (self.scroll_index + 1) % len(text)
+        self.root.after(150, self.scroll_text_animation)
+
+    # ---------------------------
+    # Function: Open Web URL
+    # ---------------------------
+    def open_url(self):
+        url = self.url_entry.get()
+        if not url.startswith("http"):
+            url = "https://" + url
+        webbrowser.open(url)
+
+    # ---------------------------
+    # Function: Quick Apps
+    # ---------------------------
+    def open_terminal(self):
+        import subprocess
+        subprocess.Popen(["open", "-a", "Terminal"])
+
+    def open_documents(self):
+        import subprocess
+        subprocess.Popen(["open", "~/Documents"], shell=True)
+
+# ---------------------------
+# Run App
+# ---------------------------
+if __name__ == "__main__":
+    root = tk.Tk()
+    app = LauncherApp(root)
+    root.mainloop()
