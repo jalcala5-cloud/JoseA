@@ -1,0 +1,501 @@
+#!/usr/bin/env python3
+"""
+Realtime Launcher for macOS (Tkinter)
+Features:
+- 12-hour clock with AM/PM (updates every second)
+- Calendar (right side) refreshed every second, with a small pink square on today's day
+- Scrolling marquee for "remind me" text
+- Top area: title / URL search bar
+- Quick open buttons: Docs, Gmail, ChatGPT, YouTube, Spotify, D2L
+- Settings dialog with many customization options:
+    * Change background color
+    * Change background image
+    * Change label / font size, color
+    * Add web URL shortcuts
+    * Add local app/executable shortcuts
+    * Edit scrolling text
+    * Toggle fullscreen
+    * Enter a shell command to run every second (automation)
+- Fullscreen & small-screen mode toggle
+- Runs a user-specified automation command every second (non-blocking)
+"""
+
+import tkinter as tk
+from tkinter import ttk, colorchooser, filedialog, simpledialog
+from tkinter import font as tkfont
+from datetime import datetime, date
+import calendar
+import webbrowser
+import subprocess
+import threading
+import time
+import os
+from PIL import Image, ImageTk
+
+UPDATE_INTERVAL_MS = 1000  # 1 second
+
+# Default config (kept in memory only)
+config = {
+    "bg_color": "#0f1115",
+    "font_color": "#e6e6e6",
+    "title": "Realtime Launcher",
+    "marquee_text": "Reminder: Drink water • Meeting at 3pm • Take a break",
+    "font_family": "Helvetica",
+    "font_size": 18,
+    "label_size": 12,
+    "bg_image_path": None,
+    "added_urls": [],  # list of (name, url)
+    "added_apps": [],  # list of (name, path)
+    "automation_cmd": None,  # command to run every second
+    "fullscreen": False
+}
+
+# Helper to run automation command in background without blocking UI
+def run_automation_once(cmd):
+    if not cmd:
+        return
+    def target():
+        try:
+            # Use shell=True carefully — we allow user to set command; they know their system.
+            subprocess.run(cmd, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except Exception as e:
+            print("Automation error:", e)
+    threading.Thread(target=target, daemon=True).start()
+
+
+class RealtimeLauncher(tk.Tk):
+    def __init__(self):
+        super().__init__()
+        self.title(config["title"])
+        self.configure(bg=config["bg_color"])
+        self.geometry("1100x700")
+        self.minsize(800, 500)
+
+        # images
+        self.bg_image = None
+        self.bg_photo = None
+
+        # fonts
+        self.clock_font = tkfont.Font(family=config["font_family"], size=36, weight="bold")
+        self.date_font = tkfont.Font(family=config["font_family"], size=14)
+        self.marquee_font = tkfont.Font(family=config["font_family"], size=20)
+        self.label_font = tkfont.Font(family=config["font_family"], size=config["label_size"])
+
+        # top frame: title + search bar
+        self.top_frame = tk.Frame(self, bg=config["bg_color"])
+        self.top_frame.pack(side="top", fill="x", padx=12, pady=8)
+
+        self.title_label = tk.Label(self.top_frame, text=config["title"],
+                                    bg=config["bg_color"], fg=config["font_color"],
+                                    font=tkfont.Font(family=config["font_family"], size=22, weight="bold"))
+        self.title_label.pack(side="left", padx=(8, 20))
+
+        # URL/search bar
+        self.url_var = tk.StringVar()
+        self.url_entry = ttk.Entry(self.top_frame, textvariable=self.url_var, width=60)
+        self.url_entry.pack(side="left", padx=(0, 6), ipady=4)
+        self.url_entry.bind("<Return>", self.open_url_from_entry)
+        self.search_btn = ttk.Button(self.top_frame, text="Open / Search", command=self.open_url_from_entry)
+        self.search_btn.pack(side="left", padx=(6, 12))
+
+        # Settings & fullscreen
+        self.settings_btn = ttk.Button(self.top_frame, text="Settings", command=self.open_settings)
+        self.settings_btn.pack(side="right", padx=(6, 8))
+        self.fullscreen_btn = ttk.Button(self.top_frame, text="Toggle Fullscreen", command=self.toggle_fullscreen)
+        self.fullscreen_btn.pack(side="right", padx=(6, 8))
+
+        # main content area
+        self.content = tk.Frame(self, bg=config["bg_color"])
+        self.content.pack(fill="both", expand=True, padx=12, pady=6)
+
+        # left pane: clock, marquee, quick buttons, bottom image
+        self.left_pane = tk.Frame(self.content, bg=config["bg_color"])
+        self.left_pane.pack(side="left", fill="both", expand=True)
+
+        # clock area
+        self.clock_frame = tk.Frame(self.left_pane, bg=config["bg_color"])
+        self.clock_frame.pack(side="top", fill="x", pady=(8, 6))
+
+        self.time_var = tk.StringVar()
+        self.time_label = tk.Label(self.clock_frame, textvariable=self.time_var,
+                                   font=self.clock_font, bg=config["bg_color"], fg=config["font_color"])
+        self.time_label.pack(anchor="w")
+
+        self.date_var = tk.StringVar()
+        self.date_label = tk.Label(self.clock_frame, textvariable=self.date_var,
+                                   font=self.date_font, bg=config["bg_color"], fg=config["font_color"])
+        self.date_label.pack(anchor="w")
+
+        # marquee (scrolling text)
+        self.marquee_canvas = tk.Canvas(self.left_pane, height=40, bg=config["bg_color"], highlightthickness=0)
+        self.marquee_canvas.pack(fill="x", pady=(8, 12))
+        self.marquee_text_id = None
+        self.marquee_x = 0
+
+        # quick links / web apps
+        self.apps_frame = tk.Frame(self.left_pane, bg=config["bg_color"])
+        self.apps_frame.pack(fill="x", pady=(8, 12))
+
+        quick_apps = [
+            ("Docs", "https://docs.google.com/"),
+            ("Gmail", "https://mail.google.com/"),
+            ("ChatGPT", "https://chat.openai.com/"),
+            ("YouTube", "https://www.youtube.com/"),
+            ("Spotify", "https://open.spotify.com/"),
+            ("D2L", "https://d2l.mydomain.edu/")  # placeholder
+        ]
+        for name, url in quick_apps:
+            b = ttk.Button(self.apps_frame, text=name, command=lambda u=url: webbrowser.open(u))
+            b.pack(side="left", padx=6, pady=4)
+
+        # user added apps container
+        self.user_apps_frame = tk.Frame(self.left_pane, bg=config["bg_color"])
+        self.user_apps_frame.pack(fill="x", pady=(6, 12))
+
+        # bottom area for custom image
+        self.bottom_image_frame = tk.Frame(self.left_pane, bg=config["bg_color"])
+        self.bottom_image_frame.pack(side="bottom", fill="x", pady=6)
+        self.bottom_image_label = tk.Label(self.bottom_image_frame, bg=config["bg_color"])
+        self.bottom_image_label.pack()
+
+        # right pane: calendar & small features box
+        self.right_pane = tk.Frame(self.content, width=320, bg=config["bg_color"])
+        self.right_pane.pack(side="right", fill="y", padx=(8,0))
+
+        self.calendar_canvas = tk.Canvas(self.right_pane, width=300, bg=config["bg_color"], highlightthickness=0)
+        self.calendar_canvas.pack(pady=10)
+
+        # small features box (toggle)
+        self.features_box = tk.Frame(self.right_pane, bg=config["bg_color"], bd=1, relief="ridge")
+        self.features_box.pack(fill="x", pady=(8, 12), padx=6)
+        self.features_label = tk.Label(self.features_box, text="Features", bg=config["bg_color"], fg=config["font_color"])
+        self.features_label.pack(anchor="w", padx=8, pady=6)
+
+        # fullscreen & small screen toggle
+        self.small_screen_btn = ttk.Button(self.features_box, text="Small Screen Mode", command=self.small_screen_mode)
+        self.small_screen_btn.pack(side="left", padx=6, pady=6)
+        self.unplug_automation_btn = ttk.Button(self.features_box, text="Run Automation Now", command=self.run_automation_now)
+        self.unplug_automation_btn.pack(side="left", padx=6, pady=6)
+
+        # status bar
+        self.status_var = tk.StringVar(value="Ready")
+        self.status_bar = tk.Label(self, textvariable=self.status_var, anchor="w", bg="#222", fg="#ddd")
+        self.status_bar.pack(side="bottom", fill="x")
+
+        # schedule first update
+        self.after(0, self.update_every_second)
+
+    # --- UI actions ---
+    def open_url_from_entry(self, event=None):
+        raw = self.url_var.get().strip()
+        if not raw:
+            return
+        # if it looks like a URL, open; otherwise perform a search
+        if raw.startswith("http://") or raw.startswith("https://"):
+            webbrowser.open(raw)
+        else:
+            # try to make it a search
+            query = webbrowser.quote(raw) if hasattr(webbrowser, "quote") else raw.replace(" ", "+")
+            webbrowser.open(f"https://www.google.com/search?q={query}")
+
+    def toggle_fullscreen(self):
+        config["fullscreen"] = not config["fullscreen"]
+        self.attributes("-fullscreen", config["fullscreen"])
+        self.status_var.set("Fullscreen: " + str(config["fullscreen"]))
+
+    def small_screen_mode(self):
+        # shrink window a bit
+        self.geometry("900x500")
+        self.status_var.set("Small screen mode enabled")
+
+    def run_automation_now(self):
+        cmd = config.get("automation_cmd")
+        if cmd:
+            run_automation_once(cmd)
+            self.status_var.set("Automation command executed")
+        else:
+            self.status_var.set("No automation command set")
+
+    # --- settings dialog ---
+    def open_settings(self):
+        dlg = tk.Toplevel(self)
+        dlg.title("Settings")
+        dlg.transient(self)
+        dlg.grab_set()
+        dlg.geometry("560x520")
+
+        # background color
+        def choose_bg_color():
+            color = colorchooser.askcolor(title="Pick background color", initialcolor=config["bg_color"])
+            if color and color[1]:
+                config["bg_color"] = color[1]
+                self.apply_theme()
+
+        ttk.Label(dlg, text="Appearance", font=("Helvetica", 12, "bold")).pack(anchor="w", padx=12, pady=(8,4))
+        ttk.Button(dlg, text="Choose Background Color", command=choose_bg_color).pack(anchor="w", padx=12, pady=6)
+        ttk.Button(dlg, text="Choose Background Image", command=self.choose_bg_image).pack(anchor="w", padx=12, pady=6)
+
+        # fonts & sizes
+        size_frame = ttk.Frame(dlg)
+        size_frame.pack(anchor="w", padx=12, pady=8, fill="x")
+        ttk.Label(size_frame, text="Label font size:").pack(side="left")
+        label_size_var = tk.IntVar(value=config["label_size"])
+        ttk.Spinbox(size_frame, from_=8, to=48, textvariable=label_size_var, width=5).pack(side="left", padx=6)
+
+        def apply_label_size():
+            config["label_size"] = label_size_var.get()
+            self.label_font.configure(size=config["label_size"])
+            self.status_var.set("Label size updated")
+
+        ttk.Button(size_frame, text="Apply", command=apply_label_size).pack(side="left", padx=6)
+
+        # font color
+        def choose_font_color():
+            color = colorchooser.askcolor(title="Pick font color", initialcolor=config["font_color"])
+            if color and color[1]:
+                config["font_color"] = color[1]
+                self.apply_theme()
+        ttk.Button(dlg, text="Choose Font Color", command=choose_font_color).pack(anchor="w", padx=12, pady=6)
+
+        # scrolling text
+        ttk.Label(dlg, text="Marquee (scrolling) text:", font=("Helvetica", 11)).pack(anchor="w", padx=12, pady=(12,2))
+        marquee_entry = ttk.Entry(dlg, width=60)
+        marquee_entry.insert(0, config["marquee_text"])
+        marquee_entry.pack(anchor="w", padx=12, pady=6)
+
+        def apply_marquee():
+            config["marquee_text"] = marquee_entry.get()
+            self.status_var.set("Marquee text updated")
+            # restart marquee positions
+            self.marquee_x = self.marquee_canvas.winfo_width()
+            self.draw_marquee()
+
+        ttk.Button(dlg, text="Apply Marquee", command=apply_marquee).pack(anchor="w", padx=12, pady=6)
+
+        # automation command
+        ttk.Label(dlg, text="Automation command (runs every second):", font=("Helvetica", 11)).pack(anchor="w", padx=12, pady=(12,2))
+        automation_entry = ttk.Entry(dlg, width=60)
+        if config.get("automation_cmd"):
+            automation_entry.insert(0, config["automation_cmd"])
+        automation_entry.pack(anchor="w", padx=12, pady=6)
+
+        def apply_automation():
+            cmd = automation_entry.get().strip()
+            config["automation_cmd"] = cmd if cmd else None
+            self.status_var.set("Automation command updated: " + (cmd[:40] + "..." if cmd and len(cmd) > 40 else str(cmd)))
+
+        ttk.Button(dlg, text="Set Automation Command", command=apply_automation).pack(anchor="w", padx=12, pady=6)
+
+        # add web URL
+        ttk.Label(dlg, text="Add quick web shortcut (name and URL):", font=("Helvetica", 11)).pack(anchor="w", padx=12, pady=(12,2))
+        add_name = ttk.Entry(dlg, width=20)
+        add_name.pack(anchor="w", padx=12, pady=(0,4))
+        add_url = ttk.Entry(dlg, width=60)
+        add_url.pack(anchor="w", padx=12, pady=(0,6))
+        def add_quick_url():
+            n = add_name.get().strip()
+            u = add_url.get().strip()
+            if n and u:
+                config["added_urls"].append((n,u))
+                self.add_url_button(n,u)
+                add_name.delete(0, "end"); add_url.delete(0,"end")
+                self.status_var.set(f"Added URL: {n}")
+        ttk.Button(dlg, text="Add URL Shortcut", command=add_quick_url).pack(anchor="w", padx=12, pady=6)
+
+        # add local app/executable
+        ttk.Label(dlg, text="Add local app/executable (choose file):", font=("Helvetica", 11)).pack(anchor="w", padx=12, pady=(12,2))
+        def add_local_app():
+            path = filedialog.askopenfilename(title="Choose application or executable")
+            if path:
+                name = os.path.basename(path)
+                config["added_apps"].append((name, path))
+                self.add_local_app_button(name, path)
+                self.status_var.set("Added local app: " + name)
+        ttk.Button(dlg, text="Add Local App", command=add_local_app).pack(anchor="w", padx=12, pady=6)
+
+        # done button
+        ttk.Button(dlg, text="Close", command=dlg.destroy).pack(side="bottom", pady=12)
+
+    def choose_bg_image(self):
+        path = filedialog.askopenfilename(title="Select background image", filetypes=[("Images", "*.png *.jpg *.jpeg *.gif *.bmp")])
+        if path:
+            config["bg_image_path"] = path
+            self.load_bg_image(path)
+            self.apply_theme()
+
+    def add_url_button(self, name, url):
+        b = ttk.Button(self.user_apps_frame, text=name, command=lambda u=url: webbrowser.open(u))
+        b.pack(side="left", padx=4, pady=4)
+
+    def add_local_app_button(self, name, path):
+        def open_local():
+            try:
+                # on macOS, use open command
+                if os.name == "posix":
+                    subprocess.Popen(["open", path])
+                else:
+                    subprocess.Popen([path], shell=True)
+            except Exception as e:
+                print("Could not open:", e)
+        b = ttk.Button(self.user_apps_frame, text=name, command=open_local)
+        b.pack(side="left", padx=4, pady=4)
+
+    def apply_theme(self):
+        # update colors and background
+        bg = config["bg_color"]
+        fg = config["font_color"]
+        self.configure(bg=bg)
+        self.top_frame.configure(bg=bg)
+        self.title_label.configure(bg=bg, fg=fg)
+        self.clock_frame.configure(bg=bg)
+        self.time_label.configure(bg=bg, fg=fg)
+        self.date_label.configure(bg=bg, fg=fg)
+        self.marquee_canvas.configure(bg=bg)
+        self.left_pane.configure(bg=bg)
+        self.content.configure(bg=bg)
+        self.right_pane.configure(bg=bg)
+        self.features_box.configure(bg=bg)
+        self.features_label.configure(bg=bg, fg=fg)
+        self.bottom_image_frame.configure(bg=bg)
+        self.bottom_image_label.configure(bg=bg)
+        self.status_bar.configure(bg="#222", fg=fg)
+        # apply background image if present
+        if config.get("bg_image_path"):
+            self.load_bg_image(config["bg_image_path"])
+        else:
+            self.bg_photo = None
+            self.bg_image = None
+            self.bottom_image_label.config(image="")
+
+    def load_bg_image(self, path):
+        try:
+            im = Image.open(path)
+            # scale to window width
+            w = max(200, self.winfo_width() - 40)
+            h = int(im.height * (w / im.width))
+            im_resized = im.resize((w, min(h, 300)), Image.LANCZOS)
+            self.bg_photo = ImageTk.PhotoImage(im_resized)
+            self.bottom_image_label.config(image=self.bg_photo)
+        except Exception as e:
+            print("Failed to load bg image:", e)
+            self.status_var.set("Failed to load background image")
+
+    # --- drawing functions ---
+    def draw_calendar(self):
+        self.calendar_canvas.delete("all")
+        now = datetime.now()
+        year = now.year
+        month = now.month
+        cal = calendar.Calendar(firstweekday=6)  # Sunday first
+        month_days = calendar.monthcalendar(year, month)
+
+        # basic layout params
+        cell_w = 40
+        cell_h = 30
+        pad_x = 10
+        pad_y = 10
+        title = f"{calendar.month_name[month]} {year}"
+        x0 = pad_x
+        y0 = pad_y
+
+        # title
+        self.calendar_canvas.create_text(x0 + 3*cell_w, y0, text=title, anchor="n",
+                                         fill=config["font_color"], font=(config["font_family"], 14, "bold"))
+
+        y0 += 28
+        # day names
+        day_names = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"]
+        for i, d in enumerate(day_names):
+            self.calendar_canvas.create_text(x0 + i*cell_w + cell_w/2, y0, text=d,
+                                            fill=config["font_color"], font=(config["font_family"], 10, "bold"))
+        y0 += 18
+
+        # draw cells
+        today = date.today()
+        for row_i, week in enumerate(month_days):
+            for col_i, daynum in enumerate(week):
+                cx = x0 + col_i*cell_w
+                cy = y0 + row_i*cell_h
+                # background rect
+                self.calendar_canvas.create_rectangle(cx, cy, cx+cell_w, cy+cell_h, outline="#333", fill=config["bg_color"])
+                if daynum != 0:
+                    # highlight today with small pink square in top-left of the cell
+                    if daynum == today.day and month == today.month and year == today.year:
+                        square_w = 10
+                        sq_x = cx + 4
+                        sq_y = cy + 4
+                        self.calendar_canvas.create_rectangle(sq_x, sq_y, sq_x+square_w, sq_y+square_w, fill="#ff6fb5", outline="#ff6fb5")
+                        # day number text in contrasting color
+                        self.calendar_canvas.create_text(cx + cell_w/2, cy + cell_h/2, text=str(daynum),
+                                                        fill=config["font_color"], font=(config["font_family"], 12, "bold"))
+                    else:
+                        self.calendar_canvas.create_text(cx + cell_w/2, cy + cell_h/2, text=str(daynum),
+                                                        fill=config["font_color"], font=(config["font_family"], 11))
+
+    def draw_marquee(self):
+        self.marquee_canvas.delete("all")
+        text = config["marquee_text"]
+        if not text:
+            return
+        # create a text item and animate it
+        fill = config["font_color"]
+        font = (config["font_family"], 18)
+        text_id = self.marquee_canvas.create_text(0, 20, text=text, anchor="w", fill=fill, font=font)
+        bbox = self.marquee_canvas.bbox(text_id)
+        if not bbox:
+            return
+        text_width = bbox[2] - bbox[0]
+        canvas_w = self.marquee_canvas.winfo_width() or 400
+        # start at right edge
+        self.marquee_x = canvas_w
+        self.marquee_canvas.coords(text_id, self.marquee_x, 20)
+        self.marquee_text_id = text_id
+
+    # update routine run every second
+    def update_every_second(self):
+        now = datetime.now()
+        hour12 = now.strftime("%I:%M:%S %p")  # 12-hour with AM/PM
+        self.time_var.set(hour12)
+        self.date_var.set(now.strftime("%A, %B %d, %Y"))
+
+        # redraw calendar
+        self.draw_calendar()
+
+        # marquee animation: move left a bit
+        if self.marquee_text_id is None:
+            self.draw_marquee()
+        else:
+            try:
+                # move text left by pixels
+                self.marquee_x -= 4
+                self.marquee_canvas.coords(self.marquee_text_id, self.marquee_x, 20)
+                bbox = self.marquee_canvas.bbox(self.marquee_text_id)
+                if bbox and bbox[2] < 0:
+                    # offscreen to left, restart on right
+                    self.marquee_x = self.marquee_canvas.winfo_width() or 600
+                    self.marquee_canvas.coords(self.marquee_text_id, self.marquee_x, 20)
+            except Exception:
+                # if canvas resized, recreate
+                self.marquee_canvas.delete("all")
+                self.marquee_text_id = None
+                self.draw_marquee()
+
+        # run the automation command if set (every second)
+        if config.get("automation_cmd"):
+            run_automation_once(config["automation_cmd"])
+
+        # schedule next update
+        self.after(UPDATE_INTERVAL_MS, self.update_every_second)
+
+
+if __name__ == "__main__":
+    app = RealtimeLauncher()
+
+    # load any initial config: add default user-specified buttons if present
+    for name, url in config.get("added_urls", []):
+        app.add_url_button(name, url)
+    for name, path in config.get("added_apps", []):
+        app.add_local_app_button(name, path)
+
+    app.apply_theme()
+    app.mainloop()
