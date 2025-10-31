@@ -1,0 +1,436 @@
+#!/usr/bin/env python3
+"""
+Simple Realtime Launcher (basic & simple)
+- 12-hour clock with seconds (AM/PM)
+- Calendar (left) refreshed every second with pink square on today's date
+- Scrolling reminder (marquee) with optional multicolor
+- Top: Title, URL/Search, Ask AI (opens a web search), Add URL
+- Quick apps: Terminal, Documents
+- Top-right fullscreen / small-screen toggle
+- Settings: background color, font sizes, add URL, add calendar event, automation command
+- Simple, no persistence, single-file. Requires Python 3 and tkinter.
+"""
+
+import tkinter as tk
+from tkinter import ttk, colorchooser, simpledialog
+from datetime import datetime, date
+import calendar
+import webbrowser
+import subprocess
+import threading
+import time
+import shlex
+import os
+
+UPDATE_MS = 1000  # update interval in ms
+
+# Simple in-memory config (kept minimal)
+cfg = {
+    "title": "Simple Launcher",
+    "bg_color": "#222228",
+    "fg_color": "#f2f2f2",
+    "clock_size": 36,
+    "date_size": 12,
+    "label_size": 10,
+    "marquee_text": "Reminder: Stay hydrated • Check email • Break at 3pm",
+    "marquee_speed": 4,
+    "marquee_multicolor": False,
+    "added_urls": [],        # list of (name, url)
+    "calendar_events": {},   # keyed by "YYYY-MM-DD": [events]
+    "automation_cmd": None,
+    "fullscreen": False
+}
+
+
+def run_cmd_background(cmd):
+    """Run a shell command in a background thread (non-blocking)."""
+    if not cmd:
+        return
+    def worker():
+        try:
+            # On macOS, simple shell run - keep output suppressed
+            subprocess.run(cmd, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except Exception as e:
+            print("Automation error:", e)
+    t = threading.Thread(target=worker, daemon=True)
+    t.start()
+
+
+class SimpleLauncher(tk.Tk):
+    def __init__(self):
+        super().__init__()
+        self.title(cfg["title"])
+        self.configure(bg=cfg["bg_color"])
+        self.geometry("1000x640")
+        self.minsize(820, 500)
+
+        # fonts
+        self.clock_font = ("Helvetica", cfg["clock_size"], "bold")
+        self.date_font = ("Helvetica", cfg["date_size"])
+        self.label_font = ("Helvetica", cfg["label_size"])
+
+        # top bar
+        self.topbar = tk.Frame(self, bg=cfg["bg_color"])
+        self.topbar.pack(side="top", fill="x", padx=8, pady=8)
+
+        self.title_lbl = tk.Label(self.topbar, text=cfg["title"], bg=cfg["bg_color"], fg=cfg["fg_color"],
+                                  font=("Helvetica", 16, "bold"))
+        self.title_lbl.pack(side="left", padx=(6, 12))
+
+        # URL / search entry
+        self.url_var = tk.StringVar()
+        self.url_entry = ttk.Entry(self.topbar, textvariable=self.url_var, width=48)
+        self.url_entry.pack(side="left", padx=6)
+        self.url_entry.bind("<Return>", self.open_url)
+
+        self.open_url_btn = ttk.Button(self.topbar, text="Open / Search", command=self.open_url)
+        self.open_url_btn.pack(side="left", padx=6)
+
+        # Ask / Talk with AI (opens a web search - simple)
+        self.ai_var = tk.StringVar()
+        self.ai_entry = ttk.Entry(self.topbar, textvariable=self.ai_var, width=28)
+        self.ai_entry.pack(side="left", padx=(12, 4))
+        self.ai_entry.bind("<Return>", self.ask_ai)
+        self.ai_btn = ttk.Button(self.topbar, text="Ask/AI", command=self.ask_ai)
+        self.ai_btn.pack(side="left", padx=4)
+
+        # top-right: fullscreen / small-screen toggle
+        self.full_btn = ttk.Button(self.topbar, text="Toggle Fullscreen", command=self.toggle_fullscreen)
+        self.full_btn.pack(side="right", padx=6)
+
+        # refresh & reset
+        self.refresh_btn = ttk.Button(self.topbar, text="Refresh", command=self.refresh_ui)
+        self.refresh_btn.pack(side="right", padx=6)
+        self.reset_btn = ttk.Button(self.topbar, text="Reset", command=self.reset_defaults)
+        self.reset_btn.pack(side="right", padx=6)
+
+        # main content frame
+        self.content = tk.Frame(self, bg=cfg["bg_color"])
+        self.content.pack(fill="both", expand=True, padx=8, pady=6)
+
+        # left panel: calendar
+        self.left_panel = tk.Frame(self.content, bg=cfg["bg_color"], width=320)
+        self.left_panel.pack(side="left", fill="y", padx=(0, 8))
+        self.calendar_canvas = tk.Canvas(self.left_panel, width=300, bg=cfg["bg_color"], highlightthickness=0)
+        self.calendar_canvas.pack(pady=12)
+
+        # center panel: clock and marquee and quick apps
+        self.center_panel = tk.Frame(self.content, bg=cfg["bg_color"])
+        self.center_panel.pack(side="left", fill="both", expand=True)
+
+        # clock
+        self.time_var = tk.StringVar()
+        self.time_lbl = tk.Label(self.center_panel, textvariable=self.time_var, font=self.clock_font,
+                                 bg=cfg["bg_color"], fg=cfg["fg_color"], anchor="w")
+        self.time_lbl.pack(anchor="nw", padx=6, pady=(8, 2))
+
+        self.date_var = tk.StringVar()
+        self.date_lbl = tk.Label(self.center_panel, textvariable=self.date_var, font=self.date_font,
+                                 bg=cfg["bg_color"], fg=cfg["fg_color"], anchor="w")
+        self.date_lbl.pack(anchor="nw", padx=6)
+
+        # marquee (scrolling reminder)
+        self.marquee_canvas = tk.Canvas(self.center_panel, height=36, bg=cfg["bg_color"], highlightthickness=0)
+        self.marquee_canvas.pack(fill="x", padx=6, pady=(12, 8))
+        self.marquee_text_id = None
+        self.marquee_x = 0
+
+        # quick apps row
+        self.quick_frame = tk.Frame(self.center_panel, bg=cfg["bg_color"])
+        self.quick_frame.pack(fill="x", padx=6, pady=(8, 12))
+        ttk.Button(self.quick_frame, text="Terminal", command=self.open_terminal).pack(side="left", padx=6)
+        ttk.Button(self.quick_frame, text="Documents", command=self.open_documents).pack(side="left", padx=6)
+        ttk.Button(self.quick_frame, text="Add URL", command=self.add_url_dialog).pack(side="left", padx=6)
+        ttk.Button(self.quick_frame, text="Settings", command=self.open_settings).pack(side="left", padx=6)
+
+        # right panel: features box (small)
+        self.right_panel = tk.Frame(self.content, bg=cfg["bg_color"], width=220)
+        self.right_panel.pack(side="right", fill="y", padx=(8, 0))
+        self.features_box = tk.LabelFrame(self.right_panel, text="Features", bg=cfg["bg_color"], fg=cfg["fg_color"])
+        self.features_box.pack(fill="x", padx=8, pady=12)
+        ttk.Button(self.features_box, text="Add Event", command=self.add_calendar_event).pack(side="left", padx=6, pady=6)
+        ttk.Button(self.features_box, text="Run Automation Now", command=self.run_automation_now).pack(side="left", padx=6, pady=6)
+
+        # status bar
+        self.status_var = tk.StringVar(value="Ready")
+        self.status = tk.Label(self, textvariable=self.status_var, anchor="w", bg="#111", fg="#ddd")
+        self.status.pack(side="bottom", fill="x")
+
+        # start updates
+        self.after(0, self._update_loop)
+
+    # ---------- Core actions ----------
+    def open_url(self, event=None):
+        raw = self.url_var.get().strip()
+        if not raw:
+            return
+        # if it looks like a url open directly, else search
+        if raw.startswith("http://") or raw.startswith("https://"):
+            webbrowser.open(raw)
+        else:
+            query = raw.replace(" ", "+")
+            webbrowser.open(f"https://www.google.com/search?q={query}")
+        self.status_var.set("Opened: " + raw)
+
+    def ask_ai(self, event=None):
+        q = self.ai_var.get().strip()
+        if not q:
+            return
+        # simple behavior: open web search for AI/ChatGPT suggestions
+        webbrowser.open(f"https://www.google.com/search?q={q}+chatgpt")
+        self.status_var.set("AI search opened")
+
+    def open_terminal(self):
+        try:
+            # macOS: open Terminal app
+            if os.name == "posix":
+                subprocess.Popen(["open", "-a", "Terminal"])
+            else:
+                subprocess.Popen(["cmd.exe"])
+            self.status_var.set("Opened Terminal")
+        except Exception as e:
+            self.status_var.set("Failed to open Terminal: " + str(e))
+
+    def open_documents(self):
+        try:
+            docs = os.path.expanduser("~/Documents")
+            if os.name == "posix":
+                subprocess.Popen(["open", docs])
+            else:
+                subprocess.Popen(["explorer", docs])
+            self.status_var.set("Opened Documents")
+        except Exception as e:
+            self.status_var.set("Failed to open Documents: " + str(e))
+
+    def add_url_dialog(self):
+        name = simpledialog.askstring("Shortcut name", "Enter a name for the URL:", parent=self)
+        if not name:
+            return
+        url = simpledialog.askstring("URL", "Enter full URL (http://...):", parent=self)
+        if not url:
+            return
+        cfg["added_urls"].append((name, url))
+        # create button in UI
+        btn = ttk.Button(self.quick_frame, text=name, command=lambda u=url: webbrowser.open(u))
+        btn.pack(side="left", padx=4)
+        self.status_var.set(f"Added URL shortcut: {name}")
+
+    def add_calendar_event(self):
+        dt = simpledialog.askstring("Date (YYYY-MM-DD)", "Enter date (YYYY-MM-DD):", parent=self)
+        if not dt:
+            return
+        ev = simpledialog.askstring("Event", "Event description:", parent=self)
+        if not ev:
+            return
+        cfg["calendar_events"].setdefault(dt, []).append(ev)
+        self.status_var.set(f"Added event on {dt}")
+
+    def run_automation_now(self):
+        cmd = cfg.get("automation_cmd")
+        if cmd:
+            run_cmd_background(cmd)
+            self.status_var.set("Automation command executed")
+        else:
+            self.status_var.set("No automation command set")
+
+    def toggle_fullscreen(self):
+        cfg["fullscreen"] = not cfg.get("fullscreen", False)
+        self.attributes("-fullscreen", cfg["fullscreen"])
+        self.status_var.set("Fullscreen: " + str(cfg["fullscreen"]))
+
+    def refresh_ui(self):
+        self.configure(bg=cfg["bg_color"])
+        self.time_lbl.configure(bg=cfg["bg_color"], fg=cfg["fg_color"])
+        self.date_lbl.configure(bg=cfg["bg_color"], fg=cfg["fg_color"])
+        self.marquee_canvas.configure(bg=cfg["bg_color"])
+        self.calendar_canvas.configure(bg=cfg["bg_color"])
+        self.status_var.set("Refreshed UI")
+
+    def reset_defaults(self):
+        cfg.update({
+            "bg_color": "#222228",
+            "fg_color": "#f2f2f2",
+            "clock_size": 36,
+            "date_size": 12,
+            "label_size": 10,
+            "marquee_text": "Reminder: Stay hydrated • Check email • Break at 3pm",
+            "marquee_multicolor": False,
+            "automation_cmd": None
+        })
+        self.clock_font = ("Helvetica", cfg["clock_size"], "bold")
+        self.date_font = ("Helvetica", cfg["date_size"])
+        self.label_font = ("Helvetica", cfg["label_size"])
+        self.time_lbl.config(font=self.clock_font)
+        self.date_lbl.config(font=self.date_font)
+        self.status_var.set("Defaults restored")
+        self.refresh_ui()
+
+    # ---------- Settings dialog (basic) ----------
+    def open_settings(self):
+        dlg = tk.Toplevel(self)
+        dlg.title("Settings")
+        dlg.geometry("520x360")
+        dlg.transient(self)
+        dlg.grab_set()
+
+        # background color
+        def pick_bg():
+            c = colorchooser.askcolor(title="Pick background color", initialcolor=cfg["bg_color"])
+            if c and c[1]:
+                cfg["bg_color"] = c[1]; self.refresh_ui()
+        ttk.Button(dlg, text="Change Background Color", command=pick_bg).pack(anchor="w", padx=12, pady=8)
+
+        # label/font size
+        def set_sizes():
+            try:
+                cs = int(cs_var.get()); ds = int(ds_var.get()); ls = int(ls_var.get())
+                cfg["clock_size"] = cs; cfg["date_size"] = ds; cfg["label_size"] = ls
+                self.clock_font = ("Helvetica", cs, "bold"); self.date_font = ("Helvetica", ds); self.label_font = ("Helvetica", ls)
+                self.time_lbl.config(font=self.clock_font); self.date_lbl.config(font=self.date_font)
+                self.status_var.set("Font sizes updated")
+            except Exception as e:
+                self.status_var.set("Invalid sizes")
+        size_frame = tk.Frame(dlg)
+        size_frame.pack(anchor="w", padx=12, pady=6)
+        tk.Label(size_frame, text="Clock size:").grid(row=0, column=0, padx=4)
+        cs_var = tk.StringVar(value=str(cfg["clock_size"]))
+        tk.Entry(size_frame, textvariable=cs_var, width=6).grid(row=0, column=1, padx=4)
+        tk.Label(size_frame, text="Date size:").grid(row=0, column=2, padx=4)
+        ds_var = tk.StringVar(value=str(cfg["date_size"]))
+        tk.Entry(size_frame, textvariable=ds_var, width=6).grid(row=0, column=3, padx=4)
+        tk.Label(size_frame, text="Label size:").grid(row=0, column=4, padx=4)
+        ls_var = tk.StringVar(value=str(cfg["label_size"]))
+        tk.Entry(size_frame, textvariable=ls_var, width=6).grid(row=0, column=5, padx=4)
+        ttk.Button(dlg, text="Apply Sizes", command=set_sizes).pack(anchor="w", padx=12, pady=(4,8))
+
+        # marquee text
+        ttk.Label(dlg, text="Marquee text:").pack(anchor="w", padx=12)
+        mvar = tk.StringVar(value=cfg["marquee_text"])
+        ttk.Entry(dlg, textvariable=mvar, width=60).pack(anchor="w", padx=12, pady=6)
+        def apply_marquee():
+            cfg["marquee_text"] = mvar.get(); self.reset_marquee(); self.status_var.set("Marquee updated")
+        ttk.Button(dlg, text="Apply Marquee", command=apply_marquee).pack(anchor="w", padx=12)
+
+        # multicolor toggle
+        mc_var = tk.BooleanVar(value=cfg["marquee_multicolor"])
+        def toggle_mc():
+            cfg["marquee_multicolor"] = mc_var.get(); self.reset_marquee()
+        ttk.Checkbutton(dlg, text="Multicolor marquee", variable=mc_var, command=toggle_mc).pack(anchor="w", padx=12, pady=6)
+
+        # automation command
+        ttk.Label(dlg, text="Automation command (runs every second):").pack(anchor="w", padx=12, pady=(8,0))
+        ac_var = tk.StringVar(value=cfg.get("automation_cmd") or "")
+        ttk.Entry(dlg, textvariable=ac_var, width=60).pack(anchor="w", padx=12, pady=6)
+        def set_auto():
+            val = ac_var.get().strip()
+            cfg["automation_cmd"] = val if val else None
+            self.status_var.set("Automation command updated")
+        ttk.Button(dlg, text="Set Automation Command", command=set_auto).pack(anchor="w", padx=12, pady=(0,6))
+
+        ttk.Button(dlg, text="Close", command=dlg.destroy).pack(side="bottom", pady=10)
+
+    # ---------- Drawing helpers ----------
+    def draw_calendar(self):
+        self.calendar_canvas.delete("all")
+        now = datetime.now()
+        y, m = now.year, now.month
+        monthcal = calendar.monthcalendar(y, m)
+        cell_w, cell_h = 40, 28
+        pad_x, pad_y = 10, 10
+        # title
+        self.calendar_canvas.create_text(150, pad_y, text=f"{calendar.month_name[m]} {y}", fill=cfg["fg_color"], font=("Helvetica", 12, "bold"))
+        # weekday headings
+        y0 = pad_y + 24
+        days = ["Su","Mo","Tu","We","Th","Fr","Sa"]
+        for i, d in enumerate(days):
+            self.calendar_canvas.create_text(pad_x + i*cell_w + cell_w/2, y0, text=d, fill=cfg["fg_color"], font=("Helvetica", 9, "bold"))
+        y0 += 16
+        today = date.today()
+        for r, week in enumerate(monthcal):
+            for c_idx, daynum in enumerate(week):
+                x = pad_x + c_idx*cell_w
+                y_pos = y0 + r*cell_h
+                self.calendar_canvas.create_rectangle(x, y_pos, x+cell_w, y_pos+cell_h, outline="#333", fill=cfg["bg_color"])
+                if daynum != 0:
+                    # small pink square if today
+                    if daynum == today.day and m == today.month and y == today.year:
+                        self.calendar_canvas.create_rectangle(x+4, y_pos+4, x+14, y_pos+14, fill="#ff6fb5", outline="#ff6fb5")
+                    self.calendar_canvas.create_text(x + cell_w/2, y_pos + cell_h/2, text=str(daynum), fill=cfg["fg_color"], font=("Helvetica", 10))
+
+        # show events for today below calendar
+        key = today.strftime("%Y-%m-%d")
+        events = cfg["calendar_events"].get(key, [])
+        if events:
+            ev_y = y0 + len(monthcal)*cell_h + 8
+            self.calendar_canvas.create_text(pad_x, ev_y, anchor="w", text="Events today:", fill=cfg["fg_color"], font=("Helvetica", 10, "bold"))
+            for i, e in enumerate(events):
+                self.calendar_canvas.create_text(pad_x, ev_y + 14*(i+1), anchor="w", text=f"• {e}", fill=cfg["fg_color"], font=("Helvetica", 9))
+
+    def reset_marquee(self):
+        self.marquee_canvas.delete("all")
+        self.marquee_text_id = None
+        self.marquee_x = 0
+
+    def draw_marquee(self):
+        self.marquee_canvas.delete("all")
+        txt = cfg.get("marquee_text", "")
+        if not txt:
+            return
+        self.marquee_text_id = self.marquee_canvas.create_text(0, 18, text=txt, anchor="w", fill=cfg["fg_color"], font=self.label_font)
+        bbox = self.marquee_canvas.bbox(self.marquee_text_id)
+        canvas_w = max(200, self.marquee_canvas.winfo_width())
+        self.marquee_x = canvas_w
+
+    def update_marquee(self):
+        if not self.marquee_text_id:
+            self.draw_marquee()
+            return
+        try:
+            self.marquee_x -= cfg.get("marquee_speed", 4)
+            self.marquee_canvas.coords(self.marquee_text_id, self.marquee_x, 18)
+            bbox = self.marquee_canvas.bbox(self.marquee_text_id)
+            if bbox and bbox[2] < 0:
+                # restart at right
+                self.marquee_x = max(self.marquee_canvas.winfo_width(), 400)
+                self.marquee_canvas.coords(self.marquee_text_id, self.marquee_x, 18)
+            if cfg.get("marquee_multicolor"):
+                colors = ["#ff6fb5","#6fb3ff","#ffd76f","#7effb2","#f87eff"]
+                idx = int(time.time() * 2) % len(colors)
+                self.marquee_canvas.itemconfigure(self.marquee_text_id, fill=colors[idx])
+        except Exception:
+            self.reset_marquee()
+
+    # ---------- Main update loop ----------
+    def _update_loop(self):
+        now = datetime.now()
+        self.time_var.set(now.strftime("%I:%M:%S %p"))  # 12-hour with seconds
+        self.date_var.set(now.strftime("%A, %B %d, %Y"))
+
+        # redraw calendar (simple, cheap)
+        self.draw_calendar()
+
+        # update marquee step
+        self.update_marquee()
+
+        # run automation every second if set
+        if cfg.get("automation_cmd"):
+            run_cmd_background(cfg["automation_cmd"])
+
+        # schedule next update
+        self.after(UPDATE_MS, self._update_loop)
+
+
+if __name__ == "__main__":
+    app = SimpleLauncher()
+
+    # small binding to open settings faster
+    app.bind("<Control-s>", lambda e: app.open_settings())
+
+    # basic refresh UI on start
+    app.refresh_ui()
+
+    # show any pre-added URL shortcuts as buttons (none by default)
+    for name, url in cfg.get("added_urls", []):
+        ttk.Button(app.quick_frame, text=name, command=lambda u=url: webbrowser.open(u)).pack(side="left", padx=4)
+
+    app.mainloop()
