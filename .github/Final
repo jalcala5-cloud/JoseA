@@ -1,0 +1,355 @@
+import tkinter as tk
+from tkinter import ttk, messagebox
+import time
+import calendar
+from datetime import datetime, date
+import threading
+import random
+
+class AutomationDashboard:
+    def __init__(self, root):
+        self.root = root
+        self.root.title("macOS Automation Dashboard")
+        self.root.geometry("1200x800")
+        self.root.configure(bg='#1a1a1a')
+        
+        # Variables
+        self.is_fullscreen = False
+        self.dark_mode = True
+        self.marquee_text = "Pima Community College"
+        self.marquee_speed = 10
+        self.marquee_color = "#00ff00"
+        self.current_date = date.today()
+        self.reminders = {}
+        self.textures = ["popcorn", "tree bark", "orange peel", "skip trowel", "lace", "smooth"]
+        self.selected_texture = "smooth"
+        
+        # Create main frames
+        self.create_widgets()
+        
+        # Start clock and calendar updates
+        self.update_clock()
+        self.update_calendar()
+        self.animate_marquee()
+        self.animate_today()
+        
+        # Simulate AI terminal
+        self.simulate_ai_terminal()
+    
+    def create_widgets(self):
+        # Top bar with clock and fullscreen toggle
+        self.top_frame = tk.Frame(self.root, bg='#2d2d2d', height=50)
+        self.top_frame.pack(fill=tk.X, side=tk.TOP)
+        self.top_frame.pack_propagate(False)
+        
+        # Clock display
+        self.clock_label = tk.Label(self.top_frame, font=('Helvetica', 16), 
+                                   bg='#2d2d2d', fg='#00ff00')
+        self.clock_label.pack(side=tk.LEFT, padx=10, pady=10)
+        
+        # Date display
+        self.date_label = tk.Label(self.top_frame, font=('Helvetica', 12), 
+                                  bg='#2d2d2d', fg='#00ff00')
+        self.date_label.pack(side=tk.LEFT, padx=10, pady=10)
+        
+        # Fullscreen toggle
+        self.fullscreen_btn = tk.Button(self.top_frame, text="⛶", font=('Helvetica', 14),
+                                       bg='#2d2d2d', fg='white', bd=0,
+                                       command=self.toggle_fullscreen)
+        self.fullscreen_btn.pack(side=tk.RIGHT, padx=10, pady=10)
+        
+        # Main content area
+        self.main_frame = tk.Frame(self.root, bg='#1a1a1a')
+        self.main_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
+        
+        # Left side - Calendar
+        self.create_calendar_section()
+        
+        # Right side - Apps and URL
+        self.create_apps_section()
+        
+        # Bottom controls
+        self.create_bottom_controls()
+    
+    def create_calendar_section(self):
+        # Calendar frame
+        self.calendar_frame = tk.Frame(self.main_frame, bg='#2d2d2d', width=400)
+        self.calendar_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 10))
+        
+        # Calendar title
+        cal_title = tk.Label(self.calendar_frame, text="Calendar", font=('Helvetica', 16, 'bold'),
+                            bg='#2d2d2d', fg='#00ff00')
+        cal_title.pack(pady=10)
+        
+        # Calendar display
+        self.calendar_display = tk.Frame(self.calendar_frame, bg='#2d2d2d')
+        self.calendar_display.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        
+        # Reminders section
+        reminders_frame = tk.Frame(self.calendar_frame, bg='#2d2d2d')
+        reminders_frame.pack(fill=tk.X, padx=10, pady=10)
+        
+        tk.Label(reminders_frame, text="Reminders/Events:", font=('Helvetica', 12),
+                bg='#2d2d2d', fg='white').pack(anchor=tk.W)
+        
+        self.reminder_entry = tk.Entry(reminders_frame, font=('Helvetica', 12), bg='#3d3d3d', fg='white')
+        self.reminder_entry.pack(fill=tk.X, pady=5)
+        self.reminder_entry.bind('<Return>', self.add_reminder)
+        
+        self.reminders_list = tk.Listbox(reminders_frame, height=4, font=('Helvetica', 10),
+                                        bg='#3d3d3d', fg='white')
+        self.reminders_list.pack(fill=tk.X)
+    
+    def create_apps_section(self):
+        # Apps frame
+        self.apps_frame = tk.Frame(self.main_frame, bg='#2d2d2d', width=400)
+        self.apps_frame.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True, padx=(10, 0))
+        
+        # Marquee text
+        self.marquee_label = tk.Label(self.apps_frame, font=('Helvetica', 14, 'bold'),
+                                     bg='#2d2d2d', fg=self.marquee_color)
+        self.marquee_label.pack(pady=10)
+        
+        # URL search bar
+        url_frame = tk.Frame(self.apps_frame, bg='#2d2d2d')
+        url_frame.pack(fill=tk.X, padx=10, pady=10)
+        
+        tk.Label(url_frame, text="Web URL:", font=('Helvetica', 12),
+                bg='#2d2d2d', fg='white').pack(anchor=tk.W)
+        
+        self.url_entry = tk.Entry(url_frame, font=('Helvetica', 12), bg='#3d3d3d', fg='white')
+        self.url_entry.pack(fill=tk.X, pady=5)
+        self.url_entry.insert(0, "https://www.google.com")
+        
+        # AI Terminal simulation
+        terminal_frame = tk.Frame(self.apps_frame, bg='#000000')
+        terminal_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        
+        self.terminal_text = tk.Text(terminal_frame, font=('Courier', 10), 
+                                    bg='#000000', fg='#00ff00', wrap=tk.WORD)
+        self.terminal_text.pack(fill=tk.BOTH, expand=True)
+        
+        # Quick apps
+        apps_title = tk.Label(self.apps_frame, text="Quick Apps", font=('Helvetica', 14, 'bold'),
+                             bg='#2d2d2d', fg='#00ff00')
+        apps_title.pack(pady=10)
+        
+        apps_buttons_frame = tk.Frame(self.apps_frame, bg='#2d2d2d')
+        apps_buttons_frame.pack(fill=tk.X, padx=10, pady=10)
+        
+        # Create app buttons
+        app_names = ["Mac Apps", "Add-on+", "Terminal", "Documents", "Settings"]
+        for i, app in enumerate(app_names):
+            btn = tk.Button(apps_buttons_frame, text=app, font=('Helvetica', 10),
+                           bg='#3d3d3d', fg='white', width=10, height=3,
+                           command=lambda a=app: self.open_app(a))
+            btn.grid(row=i//3, column=i%3, padx=5, pady=5)
+    
+    def create_bottom_controls(self):
+        # Bottom controls frame
+        bottom_frame = tk.Frame(self.root, bg='#2d2d2d', height=50)
+        bottom_frame.pack(fill=tk.X, side=tk.BOTTOM)
+        bottom_frame.pack_propagate(False)
+        
+        # Control buttons
+        refresh_btn = tk.Button(bottom_frame, text="Refresh", font=('Helvetica', 12),
+                               bg='#3d3d3d', fg='white', command=self.refresh_dashboard)
+        refresh_btn.pack(side=tk.LEFT, padx=10, pady=10)
+        
+        reset_btn = tk.Button(bottom_frame, text="Reset", font=('Helvetica', 12),
+                             bg='#3d3d3d', fg='white', command=self.reset_dashboard)
+        reset_btn.pack(side=tk.LEFT, padx=10, pady=10)
+        
+        exit_btn = tk.Button(bottom_frame, text="Exit", font=('Helvetica', 12),
+                            bg='#ff4444', fg='white', command=self.root.quit)
+        exit_btn.pack(side=tk.RIGHT, padx=10, pady=10)
+    
+    def update_clock(self):
+        now = datetime.now()
+        time_str = now.strftime("%I:%M:%S %p")
+        date_str = now.strftime("%A, %B %d, %Y")
+        
+        self.clock_label.config(text=time_str)
+        self.date_label.config(text=date_str)
+        
+        # Update every second
+        self.root.after(1000, self.update_clock)
+    
+    def update_calendar(self):
+        # Clear previous calendar
+        for widget in self.calendar_display.winfo_children():
+            widget.destroy()
+        
+        # Get current month and year
+        year = self.current_date.year
+        month = self.current_date.month
+        
+        # Create calendar header
+        header = tk.Label(self.calendar_display, 
+                         text=calendar.month_name[month] + " " + str(year),
+                         font=('Helvetica', 14, 'bold'), bg='#2d2d2d', fg='#00ff00')
+        header.pack(pady=5)
+        
+        # Create day names
+        days_frame = tk.Frame(self.calendar_display, bg='#2d2d2d')
+        days_frame.pack(fill=tk.X)
+        
+        day_names = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+        for day in day_names:
+            label = tk.Label(days_frame, text=day, font=('Helvetica', 10, 'bold'),
+                            bg='#2d2d2d', fg='#00ff00', width=5)
+            label.pack(side=tk.LEFT, padx=2)
+        
+        # Create calendar grid
+        cal = calendar.monthcalendar(year, month)
+        for week in cal:
+            week_frame = tk.Frame(self.calendar_display, bg='#2d2d2d')
+            week_frame.pack(fill=tk.X)
+            
+            for day in week:
+                day_str = str(day) if day != 0 else ""
+                bg_color = '#ff00ff' if day == date.today().day and month == date.today().month and year == date.today().year else '#2d2d2d'
+                fg_color = 'white' if day != 0 else '#2d2d2d'
+                
+                day_label = tk.Label(week_frame, text=day_str, font=('Helvetica', 10),
+                                    bg=bg_color, fg=fg_color, width=5, height=2)
+                day_label.pack(side=tk.LEFT, padx=2, pady=2)
+    
+    def animate_marquee(self):
+        # Simple marquee animation by shifting text
+        if hasattr(self, 'marquee_text'):
+            text = self.marquee_text
+            if len(text) > 0:
+                self.marquee_text = text[1:] + text[0]
+                self.marquee_label.config(text=self.marquee_text)
+        
+        self.root.after(self.marquee_speed * 100, self.animate_marquee)
+    
+    def animate_today(self):
+        # Change color of today's date in calendar
+        self.root.after(1000, self.animate_today)
+    
+    def simulate_ai_terminal(self):
+        # Simulate AI terminal output
+        messages = [
+            "Initializing automation system...",
+            "Loading calendar module...",
+            "Synchronizing time servers...",
+            "Monitoring system resources...",
+            "Ready for user commands."
+        ]
+        
+        def add_messages():
+            for msg in messages:
+                self.terminal_text.insert(tk.END, f"> {msg}\n")
+                self.terminal_text.see(tk.END)
+                time.sleep(1)
+            
+            # Continue with random "AI" messages
+            while True:
+                ai_messages = [
+                    "System optimization in progress...",
+                    "No anomalies detected.",
+                    "All automation tasks running smoothly.",
+                    "Calendar reminders synchronized.",
+                    "Clock accuracy: 99.99%"
+                ]
+                msg = random.choice(ai_messages)
+                self.terminal_text.insert(tk.END, f"> {msg}\n")
+                self.terminal_text.see(tk.END)
+                time.sleep(5)
+        
+        # Run in separate thread to avoid blocking GUI
+        thread = threading.Thread(target=add_messages)
+        thread.daemon = True
+        thread.start()
+    
+    def toggle_fullscreen(self):
+        self.is_fullscreen = not self.is_fullscreen
+        self.root.attributes("-fullscreen", self.is_fullscreen)
+        self.fullscreen_btn.config(text="⛶" if not self.is_fullscreen else "❐")
+    
+    def add_reminder(self, event=None):
+        reminder = self.reminder_entry.get()
+        if reminder:
+            today = date.today().isoformat()
+            if today not in self.reminders:
+                self.reminders[today] = []
+            self.reminders[today].append(reminder)
+            self.reminders_list.insert(tk.END, reminder)
+            self.reminder_entry.delete(0, tk.END)
+    
+    def open_app(self, app_name):
+        if app_name == "Settings":
+            self.open_settings()
+        else:
+            messagebox.showinfo("App Launch", f"Opening {app_name}")
+    
+    def open_settings(self):
+        settings_window = tk.Toplevel(self.root)
+        settings_window.title("Settings")
+        settings_window.geometry("600x400")
+        settings_window.configure(bg='#2d2d2d')
+        
+        # Create notebook for settings tabs
+        notebook = ttk.Notebook(settings_window)
+        
+        # Display tab
+        display_frame = ttk.Frame(notebook)
+        notebook.add(display_frame, text="Display")
+        
+        # Date & Time tab
+        datetime_frame = ttk.Frame(notebook)
+        notebook.add(datetime_frame, text="Date & Time")
+        
+        # Marquee tab
+        marquee_frame = ttk.Frame(notebook)
+        notebook.add(marquee_frame, text="Marquee")
+        
+        # Calendar tab
+        calendar_frame = ttk.Frame(notebook)
+        notebook.add(calendar_frame, text="Calendar")
+        
+        # Text tab
+        text_frame = ttk.Frame(notebook)
+        notebook.add(text_frame, text="Text")
+        
+        # Wallpaper tab
+        wallpaper_frame = ttk.Frame(notebook)
+        notebook.add(wallpaper_frame, text="Wallpaper")
+        
+        notebook.pack(expand=True, fill='both', padx=10, pady=10)
+        
+        # Add some sample settings
+        ttk.Label(display_frame, text="Screen Size:").grid(row=0, column=0, sticky=tk.W, padx=10, pady=5)
+        ttk.Combobox(display_frame, values=["Fill Screen", "Fit to Screen", "Stretch", "Center", "Tile"]).grid(row=0, column=1, padx=10, pady=5)
+        
+        ttk.Label(marquee_frame, text="Marquee Speed:").grid(row=0, column=0, sticky=tk.W, padx=10, pady=5)
+        ttk.Scale(marquee_frame, from_=1, to=20, orient=tk.HORIZONTAL).grid(row=0, column=1, padx=10, pady=5)
+        
+        ttk.Label(text_frame, text="Text Color:").grid(row=0, column=0, sticky=tk.W, padx=10, pady=5)
+        ttk.Combobox(text_frame, values=["Green", "Blue", "Red", "Yellow", "Purple"]).grid(row=0, column=1, padx=10, pady=5)
+        
+        # Save and Exit buttons
+        button_frame = tk.Frame(settings_window, bg='#2d2d2d')
+        button_frame.pack(fill=tk.X, pady=10)
+        
+        ttk.Button(button_frame, text="Save", command=settings_window.destroy).pack(side=tk.RIGHT, padx=10)
+        ttk.Button(button_frame, text="Exit", command=settings_window.destroy).pack(side=tk.RIGHT, padx=10)
+    
+    def refresh_dashboard(self):
+        self.update_calendar()
+        messagebox.showinfo("Refresh", "Dashboard refreshed!")
+    
+    def reset_dashboard(self):
+        self.reminders = {}
+        self.reminders_list.delete(0, tk.END)
+        messagebox.showinfo("Reset", "Dashboard reset to default!")
+
+def main():
+    root = tk.Tk()
+    app = AutomationDashboard(root)
+    root.mainloop()
+
+if __name__ == "__main__":
+    main()
