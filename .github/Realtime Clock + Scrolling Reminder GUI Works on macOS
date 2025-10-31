@@ -1,0 +1,60 @@
+#!/usr/bin/env python3
+"""
+Realtime Clock + Scrolling Reminder GUI
+Works on macOS
+"""
+
+import tkinter as tk
+from datetime import datetime
+
+class RealtimeApp:
+    def __init__(self, root):
+        self.root = root
+        self.root.title("Realtime Clock + Reminder")
+        self.root.geometry("400x200")
+        self.root.configure(bg="#1c1c1e")
+
+        # Clock label
+        self.clock_label = tk.Label(root, font=("Helvetica", 24, "bold"), fg="white", bg="#1c1c1e")
+        self.clock_label.pack(pady=10)
+
+        # Date label
+        self.date_label = tk.Label(root, font=("Helvetica", 14), fg="lightgray", bg="#1c1c1e")
+        self.date_label.pack()
+
+        # Scrolling text
+        self.reminder_text = "Welcome! Stay positive and focused!"
+        self.scrolling_label = tk.Label(root, text="", font=("Helvetica", 14), fg="#ff66cc", bg="#1c1c1e")
+        self.scrolling_label.pack(pady=20)
+
+        self.scroll_index = 0
+
+        # Update loop
+        self.update_clock()
+        self.scroll_text()
+
+    def update_clock(self):
+        now = datetime.now()
+        current_time = now.strftime("%I:%M:%S %p")
+        current_date = now.strftime("%A, %B %d, %Y")
+
+        self.clock_label.config(text=current_time)
+        self.date_label.config(text=current_date)
+
+        # Schedule next update in 1 second
+        self.root.after(1000, self.update_clock)
+
+    def scroll_text(self):
+        display_length = 25
+        padded_text = " " * display_length + self.reminder_text + " " * display_length
+        text_to_show = padded_text[self.scroll_index:self.scroll_index + display_length]
+
+        self.scrolling_label.config(text=text_to_show)
+        self.scroll_index = (self.scroll_index + 1) % len(padded_text)
+
+        self.root.after(150, self.scroll_text)
+
+if __name__ == "__main__":
+    root = tk.Tk()
+    app = RealtimeApp(root)
+    root.mainloop()
