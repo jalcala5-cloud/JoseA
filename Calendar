@@ -1,0 +1,10 @@
+
+
+
+#Calendar
+
+  Import Calendar 
+yy = 2025 #Year
+mm = 12 #Month 
+# Display The Calendar
+Print(Calendar.Month(yy,mm))
